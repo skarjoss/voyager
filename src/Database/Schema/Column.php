@@ -12,10 +12,18 @@ abstract class Column
     {
         $name = Identifier::validate($column['name'], 'Column');
         $type = $column['type'];
-        $type = ($type instanceof DoctrineType) ? $type : DoctrineType::getType(trim($type['name']));
-        $type->tableName = $tableName;
+        $type = ($type instanceof DoctrineType)
+            ? $type
+            : DoctrineType::getType(Type::resolveDoctrineTypeName($type['name']));
+
+        if ($tableName !== null && $type instanceof Type) {
+            $type->tableName = $tableName;
+        }
 
         $options = array_diff_key($column, array_flip(['name', 'composite', 'oldName', 'null', 'extra', 'type', 'charset', 'collation']));
+        $options = array_filter($options, function ($value) {
+            return $value !== null;
+        });
 
         return new DoctrineColumn($name, $type, $options);
     }

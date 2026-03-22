@@ -18,13 +18,23 @@ abstract class Index
         }
 
         if (isset($index['type'])) {
-            $type = $index['type'];
+            $type = strtoupper($index['type']);
+
+            if ($type == 'PRI' || $type == 'PRIMARY KEY') {
+                $type = static::PRIMARY;
+            } elseif ($type == 'UNI' || $type == 'UNIQUE') {
+                $type = static::UNIQUE;
+            } elseif ($type == 'MUL' || $type == 'INDEX' || $type == 'KEY') {
+                $type = static::INDEX;
+            }
 
             $isPrimary = ($type == static::PRIMARY);
             $isUnique = $isPrimary || ($type == static::UNIQUE);
         } else {
-            $isPrimary = $index['isPrimary'];
-            $isUnique = $index['isUnique'];
+            $isPrimary = $index['isPrimary'] ?? $index['primary'] ?? false;
+            $isUnique = $index['isUnique'] ?? $index['unique'] ?? false;
+            $isPrimary = (bool) $isPrimary;
+            $isUnique = $isPrimary || (bool) $isUnique;
 
             // Set the type
             if ($isPrimary) {

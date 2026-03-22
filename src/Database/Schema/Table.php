@@ -2,7 +2,6 @@
 
 namespace TCG\Voyager\Database\Schema;
 
-use Doctrine\DBAL\Schema\Comparator;
 use Doctrine\DBAL\Schema\Table as DoctrineTable;
 
 class Table extends DoctrineTable
@@ -84,12 +83,25 @@ class Table extends DoctrineTable
 
     public function diff(DoctrineTable $compareTable)
     {
-        return (new Comparator())->diffTable($this, $compareTable);
+        $comparator = SchemaManager::createComparator();
+
+        if (method_exists($comparator, 'compareTables')) {
+            return $comparator->compareTables($this, $compareTable);
+        }
+
+        return $comparator->diffTable($this, $compareTable);
     }
 
     public function diffOriginal()
     {
-        return (new Comparator())->diffTable(SchemaManager::getDoctrineTable($this->_name), $this);
+        $comparator = SchemaManager::createComparator();
+        $table = SchemaManager::getDoctrineTable($this->_name);
+
+        if (method_exists($comparator, 'compareTables')) {
+            return $comparator->compareTables($table, $this);
+        }
+
+        return $comparator->diffTable($table, $this);
     }
 
     /**

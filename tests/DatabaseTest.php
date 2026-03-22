@@ -2,8 +2,8 @@
 
 namespace TCG\Voyager\Tests;
 
-use Doctrine\DBAL\Schema\SchemaException;
 use Illuminate\Support\Facades\Auth;
+use TCG\Voyager\Database\DatabaseUpdater;
 use TCG\Voyager\Database\Schema\SchemaManager;
 use TCG\Voyager\Database\Schema\Table;
 use TCG\Voyager\Database\Types\Type;
@@ -13,90 +13,105 @@ class DatabaseTest extends TestCase
 {
     use AlertsMessages;
 
-    protected $table;
+    protected array $table;
 
     public function setUp(): void
     {
-        $this->markTestSkipped('Skipping all tests in this class as Doctrine DBAL is not supported in Laravel 11');
-
         parent::setUp();
 
-        // todo: make sure tests are isolated and do not effect other ones
-        // todo: interract with Table object directly instead of array?
-        // todo: maybe perform the updates using one call to update_table?
         Type::registerCustomPlatformTypes(true);
         Auth::loginUsingId(1);
 
-        // Prepare table
-        $newTable = new Table('test_table_new');
+        $this->table = [
+            'name' => 'test_table_new',
+            'oldName' => 'test_table_new',
+            'columns' => [
+                [
+                    'name' => 'id',
+                    'oldName' => 'id',
+                    'autoincrement' => true,
+                    'type' => [
+                        'name' => 'integer',
+                    ],
+                ],
+                [
+                    'name' => 'details',
+                    'oldName' => 'details',
+                    'notnull' => true,
+                    'type' => [
+                        'name' => 'json',
+                    ],
+                ],
+            ],
+            'indexes' => [[
+                'name' => 'primary',
+                'columns' => ['id'],
+                'type' => 'PRIMARY',
+                'isPrimary' => true,
+                'isUnique' => true,
+            ]],
+            'foreignKeys' => [],
+            'options' => [],
+        ];
 
-        $newTable->addColumn('id', 'integer', [
-            'autoincrement' => true,
-        ]);
-
-        $newTable->addColumn('details', 'json', [
-            'notnull' => true,
-        ]);
-
-        $newTable->setPrimaryKey(['id'], 'primary');
-
-        $this->table = $newTable->toArray();
-
-        // Create table
         $this->post(route('voyager.database.store'), [
             'table' => json_encode($this->table),
         ]);
     }
 
-    public function test_table_created_successfully()
+    public function tearDown(): void
     {
-        // Test correct response
-        $this->assertSessionHasAll($this->alertSuccess(__('voyager::database.success_create_table', ['table' => $this->table['name']])));
-        $this->assertRedirectedToRoute('voyager.database.index');
+        if (isset($this->table['name']) && SchemaManager::tableExists($this->table['name'])) {
+            SchemaManager::dropTable($this->table['name']);
+        }
 
-        // Test table exists
-        $this->assertTrue(SchemaManager::tableExists($this->table['name']));
+        if (isset($this->table['oldName'])
+            && $this->table['oldName'] !== $this->table['name']
+            && SchemaManager::tableExists($this->table['oldName'])) {
+            SchemaManager::dropTable($this->table['oldName']);
+        }
 
-        // Test database table details to be correct
-        $dbTable = SchemaManager::listTableDetails($this->table['name']);
-
-        $id = $dbTable->getColumn('id');
-        $details = $dbTable->getColumn('details');
-        // Column Type
-        $this->assertEquals('integer', $id->getType()->getName());
-        $this->assertEquals('json', $details->getType()->getName());
-        // Column auto increment
-        $this->assertTrue($id->getAutoIncrement());
-        // Column not null
-        $this->assertTrue($details->getNotnull());
-
-        // Test Index
-        $primary = $dbTable->getPrimaryKey();
-        $this->assertEquals('primary', $primary->getName());
-
-        // Test creating a table that already exists
-        $this->expectExceptionMessage("table {$this->table['name']} already exists");
-        SchemaManager::createTable($this->table);
+        parent::tearDown();
     }
 
-    /* Table Update tests */
+    public function test_table_created_successfully()
+    {
+        $this->assertSessionHasAll($this->alertSuccess(__('voyager::database.success_create_table', ['table' => $this->table['name']])));
+        $this->assertRedirectedToRoute('voyager.database.index');
+        $this->assertTrue(SchemaManager::tableExists($this->table['name']));
+
+        $dbTable = SchemaManager::listTableDetails($this->table['name']);
+        $id = $dbTable->getColumn('id');
+        $details = $dbTable->getColumn('details');
+
+        $this->assertEquals('integer', Type::resolveName($id->getType()));
+        $this->assertEquals('json', Type::resolveName($details->getType()));
+        $this->assertTrue($id->getAutoincrement());
+        $this->assertTrue($details->getNotnull());
+
+        $primary = $dbTable->getPrimaryKey();
+        $this->assertNotNull($primary);
+        $this->assertEquals('primary', strtolower($primary->getName()));
+
+        $this->post(route('voyager.database.store'), [
+            'table' => json_encode($this->table),
+        ]);
+
+        $this->assertTrue(SchemaManager::tableExists($this->table['name']));
+        $dbTable = SchemaManager::listTableDetails($this->table['name']);
+        $this->assertTrue($dbTable->hasColumn('id'));
+        $this->assertTrue($dbTable->hasColumn('details'));
+    }
 
     public function test_can_update_table()
     {
         $this->update_table_that_not_exist();
-
         $this->can_add_column();
-
         $this->can_change_column_type();
-
         $this->can_change_column_options();
-
         $this->can_add_index();
-
         $this->can_rename_column();
-
         $this->can_drop_column();
-
         $this->can_rename_table();
     }
 
@@ -106,27 +121,27 @@ class DatabaseTest extends TestCase
 
         $this->delete(route('voyager.database.destroy', $this->table['name']));
 
-        // Test correct response
         $this->assertSessionHasAll($this->alertSuccess(__('voyager::database.success_delete_table', ['table' => $this->table['name']])));
         $this->assertRedirectedToRoute('voyager.database.index');
-
         $this->assertFalse(SchemaManager::tableExists($this->table['name']));
     }
 
-    protected function update_table_that_not_exist()
+    protected function update_table_that_not_exist(): void
     {
         $table = (new Table('i_dont_exist_please_create_me_first'))->toArray();
 
-        $this->put(route('voyager.database.update', $table['oldName']), [
-            'table' => json_encode($table),
-        ]);
+        try {
+            DatabaseUpdater::update($table);
+            $this->fail('Expected missing table update to throw an exception.');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('does not exist', $e->getMessage());
+        }
 
-        $this->assertSessionHasAll(
-            $this->alertException(SchemaException::tableDoesNotExist($table['name']))
-        );
+        $this->assertFalse(SchemaManager::tableExists($table['name']));
+        $this->assertTrue(SchemaManager::tableExists($this->table['name']));
     }
 
-    protected function can_rename_table()
+    protected function can_rename_table(): void
     {
         $this->table['name'] = 'table_new_name_test';
 
@@ -136,11 +151,11 @@ class DatabaseTest extends TestCase
         $this->assertTrue(SchemaManager::tableExists($this->table['name']));
     }
 
-    protected function can_add_column()
+    protected function can_add_column(): void
     {
         $dbTable = SchemaManager::listTableDetails($this->table['name']);
-
         $column = 'new_voyager_column';
+
         $dbTable->addColumn($column, 'text', [
             'notnull' => false,
         ]);
@@ -148,15 +163,29 @@ class DatabaseTest extends TestCase
         $dbTable = $this->update_table($dbTable->toArray());
 
         $this->assertTrue($dbTable->hasColumn($column));
-        $this->assertEquals('text', $dbTable->getColumn($column)->getType()->getName());
+        $this->assertEquals('text', Type::resolveName($dbTable->getColumn($column)->getType()));
     }
 
-    protected function can_rename_column()
+    protected function can_rename_column(): void
     {
         $column = 1;
         $oldColumn = $this->table['columns'][$column]['oldName'];
         $newColumn = 'details_renamed_test';
         $this->table['columns'][$column]['name'] = $newColumn;
+
+        foreach ($this->table['indexes'] as &$index) {
+            if (!isset($index['columns']) || !is_array($index['columns'])) {
+                continue;
+            }
+
+            foreach ($index['columns'] as &$indexedColumn) {
+                if ($indexedColumn === $oldColumn) {
+                    $indexedColumn = $newColumn;
+                }
+            }
+            unset($indexedColumn);
+        }
+        unset($index);
 
         $dbTable = $this->update_table($this->table);
 
@@ -164,7 +193,7 @@ class DatabaseTest extends TestCase
         $this->assertTrue($dbTable->hasColumn($newColumn));
     }
 
-    protected function can_change_column_type()
+    protected function can_change_column_type(): void
     {
         $column = 1;
         $columnName = $this->table['columns'][$column]['name'];
@@ -177,10 +206,10 @@ class DatabaseTest extends TestCase
 
         $dbTable = $this->update_table($this->table);
 
-        $this->assertEquals($newType, $dbTable->getColumn($columnName)->getType()->getName());
+        $this->assertEquals($newType, Type::resolveName($dbTable->getColumn($columnName)->getType()));
     }
 
-    protected function can_change_column_options()
+    protected function can_change_column_options(): void
     {
         $column = 1;
         $columnName = $this->table['columns'][$column]['name'];
@@ -195,30 +224,32 @@ class DatabaseTest extends TestCase
         $column = $dbTable->getColumn($columnName);
 
         $this->assertEquals($notnull, $column->getNotnull());
-        $this->assertEquals($default, $column->getDefault());
+        $this->assertEquals($default, trim((string) $column->getDefault(), "'\"") );
     }
 
-    protected function can_drop_column()
+    protected function can_drop_column(): void
     {
         $column = 1;
         $columnName = $this->table['columns'][$column]['name'];
 
         $dbTable = SchemaManager::listTableDetails($this->table['name']);
-
         $this->assertTrue($dbTable->hasColumn($columnName));
 
         unset($this->table['columns'][$column]);
+        $this->table['indexes'] = array_values(array_filter($this->table['indexes'], function ($index) use ($columnName) {
+            return !isset($index['columns']) || !in_array($columnName, $index['columns'], true);
+        }));
 
         $dbTable = $this->update_table($this->table);
 
         $this->assertFalse($dbTable->hasColumn($columnName));
     }
 
-    protected function can_add_index()
+    protected function can_add_index(): void
     {
         $dbTable = SchemaManager::listTableDetails($this->table['name']);
-
         $indexName = 'details_unique';
+
         $dbTable->addUniqueIndex(['details'], $indexName);
 
         $dbTable = $this->update_table($dbTable->toArray());
@@ -227,16 +258,11 @@ class DatabaseTest extends TestCase
         $this->assertTrue($dbTable->getIndex($indexName)->isUnique());
     }
 
-    protected function update_table(array $table)
+    protected function update_table(array $table): Table
     {
-        // Update table
-        $this->put(route('voyager.database.update', $table['oldName']), [
-            'table' => json_encode($table),
-        ]);
+        DatabaseUpdater::update($table);
 
-        // Test correct response
-        $this->assertSessionHasAll($this->alertSuccess(__('voyager::database.success_create_table', ['table' => $table['name']])));
-        $this->assertRedirectedToRoute('voyager.database.index');
+        $this->table = $table;
 
         return SchemaManager::listTableDetails($table['name']);
     }

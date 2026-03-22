@@ -9,7 +9,7 @@ class TsVectorType extends Type
 {
     public const NAME = 'tsvector';
 
-    public function getSQLDeclaration(array $field, AbstractPlatform $platform)
+    public function getSQLDeclaration(array $field, AbstractPlatform $platform): string
     {
         return 'tsvector';
     }

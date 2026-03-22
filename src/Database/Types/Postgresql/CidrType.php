@@ -9,7 +9,7 @@ class CidrType extends Type
 {
     public const NAME = 'cidr';
 
-    public function getSQLDeclaration(array $field, AbstractPlatform $platform)
+    public function getSQLDeclaration(array $field, AbstractPlatform $platform): string
     {
         return 'cidr';
     }

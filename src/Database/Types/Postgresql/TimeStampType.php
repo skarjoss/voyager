@@ -9,7 +9,7 @@ class TimeStampType extends Type
 {
     public const NAME = 'timestamp';
 
-    public function getSQLDeclaration(array $field, AbstractPlatform $platform)
+    public function getSQLDeclaration(array $field, AbstractPlatform $platform): string
     {
         return 'timestamp(0) without time zone';
     }

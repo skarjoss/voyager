@@ -9,13 +9,17 @@ use TCG\Voyager\Database\Schema\SchemaManager;
 
 abstract class Type extends DoctrineType
 {
+    public $tableName;
+
     protected static $customTypesRegistered = false;
     protected static $platformTypeMapping = [];
     protected static $allTypes = [];
     protected static $platformTypes = [];
     protected static $customTypeOptions = [];
+    protected static $resolvedCustomTypeOptions = [];
     protected static $typeCategories = [];
     protected static $registeredTypes = [];
+    protected static $resolvedTypeNames = [];
 
     public const NAME = 'UNDEFINED_TYPE_NAME';
     public const NOT_SUPPORTED = 'notSupported';
@@ -25,17 +29,18 @@ abstract class Type extends DoctrineType
 
     // Note: length, precision and scale need default values manually
 
-    public function getName()
+    public function getName(): string
     {
         return static::NAME;
     }
 
     public static function toArray(DoctrineType $type)
     {
-        $customTypeOptions = $type->customOptions ?? [];
+        $name = static::resolveName($type);
+        $customTypeOptions = static::$resolvedCustomTypeOptions[$name] ?? [];
 
         return array_merge([
-            'name' => $type->getName(),
+            'name' => $name,
         ], $customTypeOptions);
     }
 
@@ -51,27 +56,28 @@ abstract class Type extends DoctrineType
 
         $platform = SchemaManager::getDatabaseConnection()->getDriverName();
 
-        static::$platformTypes = Platform::getPlatformTypes(
-            $platform,
-            static::getPlatformTypeMapping()
-        );
+        static::$platformTypes = Platform::getPlatformTypes($platform, static::getPlatformTypeMapping());
 
         static::$platformTypes = static::$platformTypes->map(function ($type) {
-            return static::toArray(new $type());
+            return static::toArray(DoctrineType::getType($type));
         })->groupBy('category');
 
         return static::$platformTypes;
     }
 
-    public static function getPlatformTypeMapping(DoctrineAbstractPlatform $platform)
+    public static function getPlatformTypeMapping(DoctrineAbstractPlatform $platform = null)
     {
         if (static::$platformTypeMapping) {
             return static::$platformTypeMapping;
         }
 
-        static::$platformTypeMapping = collect(
-            get_protected_property($platform, 'doctrineTypeMapping')
-        );
+        $types = array_keys(DoctrineType::getTypesMap());
+
+        if (!empty(static::$registeredTypes)) {
+            $types = array_merge($types, array_keys(static::$registeredTypes));
+        }
+
+        static::$platformTypeMapping = collect($types)->unique()->values();
 
         return static::$platformTypeMapping;
     }
@@ -92,8 +98,6 @@ abstract class Type extends DoctrineType
 
         foreach ($customTypes as $type) {
             $name = $type::NAME;
-            // Instead of overriding or adding Doctrine types,
-            // you might want to register these types in your own type registry
             static::registerType($name, $type);
         }
 
@@ -112,7 +116,11 @@ abstract class Type extends DoctrineType
         foreach (static::$customTypeOptions as $option) {
             foreach ($option['types'] as $type) {
                 if (static::hasType($type)) {
-                    static::getType($type)->customOptions[$option['name']] = $option['value'];
+                    if (!isset(static::$resolvedCustomTypeOptions[$type])) {
+                        static::$resolvedCustomTypeOptions[$type] = [];
+                    }
+
+                    static::$resolvedCustomTypeOptions[$type][$option['name']] = $option['value'];
                 }
             }
         }
@@ -327,6 +335,93 @@ abstract class Type extends DoctrineType
 
     public static function registerType($name, $typeClass)
     {
+        if (DoctrineType::hasType($name)) {
+            DoctrineType::overrideType($name, $typeClass);
+        } else {
+            DoctrineType::addType($name, $typeClass);
+        }
+
         static::$registeredTypes[$name] = $typeClass;
+    }
+
+    public static function resolveDoctrineTypeName($name)
+    {
+        $name = trim(strtolower($name));
+
+        if (DoctrineType::hasType($name)) {
+            return $name;
+        }
+
+        $aliases = [
+            'varchar' => 'string',
+            'character varying' => 'string',
+            'char' => 'string',
+            'character' => 'string',
+            'int' => 'integer',
+            'tinyint' => 'boolean',
+            'mediumint' => 'integer',
+            'bigserial' => 'bigint',
+            'serial' => 'integer',
+            'jsonb' => 'json',
+            'timestamp' => 'datetime',
+            'timestamp without time zone' => 'datetime',
+            'timestamp with time zone' => 'datetimetz',
+        ];
+
+        if (isset($aliases[$name]) && DoctrineType::hasType($aliases[$name])) {
+            return $aliases[$name];
+        }
+
+        try {
+            $platform = SchemaManager::getDoctrineConnection()->getDatabasePlatform();
+
+            if (method_exists($platform, 'getDoctrineTypeMapping')) {
+                $mapped = $platform->getDoctrineTypeMapping($name);
+
+                if (DoctrineType::hasType($mapped)) {
+                    return $mapped;
+                }
+            }
+        } catch (\Throwable $e) {
+        }
+
+        return DoctrineType::hasType('string') ? 'string' : $name;
+    }
+
+    public static function resolveName(DoctrineType $type)
+    {
+        $class = get_class($type);
+
+        if (isset(static::$resolvedTypeNames[$class])) {
+            return static::$resolvedTypeNames[$class];
+        }
+
+        if (method_exists(DoctrineType::class, 'lookupName')) {
+            try {
+                return static::$resolvedTypeNames[$class] = DoctrineType::lookupName($type);
+            } catch (\Throwable $e) {
+            }
+        }
+
+        if (defined($class.'::NAME')) {
+            return static::$resolvedTypeNames[$class] = $class::NAME;
+        }
+
+        if (method_exists($type, 'getName')) {
+            try {
+                return static::$resolvedTypeNames[$class] = $type->getName();
+            } catch (\Throwable $e) {
+            }
+        }
+
+        foreach (DoctrineType::getTypesMap() as $name => $registeredClass) {
+            if ($registeredClass === $class) {
+                return static::$resolvedTypeNames[$class] = $name;
+            }
+        }
+
+        $reflection = new \ReflectionClass($type);
+
+        return static::$resolvedTypeNames[$class] = strtolower($reflection->getShortName());
     }
 }

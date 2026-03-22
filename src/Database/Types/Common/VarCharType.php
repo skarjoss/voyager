@@ -8,7 +8,7 @@ class VarCharType extends DoctrineStringType
 {
     public const NAME = 'varchar';
 
-    public function getName()
+    public function getName(): string
     {
         return static::NAME;
     }

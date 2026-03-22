@@ -2,9 +2,6 @@
 
 namespace TCG\Voyager\Database;
 
-use Doctrine\DBAL\Schema\Column;
-use Doctrine\DBAL\Schema\SchemaException;
-use Doctrine\DBAL\Schema\TableDiff;
 use TCG\Voyager\Database\Schema\SchemaManager;
 use TCG\Voyager\Database\Schema\Table;
 use TCG\Voyager\Database\Types\Type;
@@ -36,7 +33,7 @@ class DatabaseUpdater
         }
 
         if (!SchemaManager::tableExists($table['oldName'])) {
-            throw SchemaException::tableDoesNotExist($table['oldName']);
+            throw static::tableDoesNotExist($table['oldName']);
         }
 
         $updater = new self($table);
@@ -51,91 +48,31 @@ class DatabaseUpdater
      */
     public function updateTable()
     {
-        // Get table new name
-        if (($newName = $this->table->getName()) != $this->originalTable->getName()) {
-            // Make sure the new name doesn't already exist
+        $originalName = $this->originalTable->getName();
+        $newName = $this->table->getName();
+
+        if ($newName != $originalName) {
             if (SchemaManager::tableExists($newName)) {
-                throw SchemaException::tableAlreadyExists($newName);
+                throw static::tableAlreadyExists($newName);
             }
-        } else {
-            $newName = false;
         }
 
-        // Rename columns
-        if ($renamedColumnsDiff = $this->getRenamedColumnsDiff()) {
-            SchemaManager::alterTable($renamedColumnsDiff);
+        $comparisonTableArr = $this->tableArr;
 
-            // Refresh original table after renaming the columns
-            $this->originalTable = SchemaManager::listTableDetails($this->tableArr['oldName']);
+        if ($newName != $originalName) {
+            $comparisonTableArr['name'] = $originalName;
         }
 
-        $tableDiff = $this->originalTable->diff($this->table);
+        $comparisonTable = Table::make($comparisonTableArr);
+        $tableDiff = $this->originalTable->diff($comparisonTable);
 
-        // Add new table name to tableDiff
-        if ($newName) {
-            if (!$tableDiff) {
-                $tableDiff = new TableDiff($this->tableArr['oldName']);
-                $tableDiff->fromTable = $this->originalTable;
-            }
-
-            $tableDiff->newName = $newName;
-        }
-
-        // Update the table
-        if ($tableDiff) {
+        if ($tableDiff && !$tableDiff->isEmpty()) {
             SchemaManager::alterTable($tableDiff);
         }
-    }
 
-    /**
-     * Get the table diff to rename columns.
-     *
-     * @return \Doctrine\DBAL\Schema\TableDiff
-     */
-    protected function getRenamedColumnsDiff()
-    {
-        $renamedColumns = $this->getRenamedColumns();
-
-        if (empty($renamedColumns)) {
-            return false;
+        if ($newName != $originalName) {
+            SchemaManager::renameTable($originalName, $newName);
         }
-
-        $renamedColumnsDiff = new TableDiff($this->tableArr['oldName']);
-        $renamedColumnsDiff->fromTable = $this->originalTable;
-
-        foreach ($renamedColumns as $oldName => $newName) {
-            $renamedColumnsDiff->renamedColumns[$oldName] = $this->table->getColumn($newName);
-        }
-
-        return $renamedColumnsDiff;
-    }
-
-    /**
-     * Get the table diff to rename columns and indexes.
-     *
-     * @return \Doctrine\DBAL\Schema\TableDiff
-     */
-    protected function getRenamedDiff()
-    {
-        $renamedColumns = $this->getRenamedColumns();
-        $renamedIndexes = $this->getRenamedIndexes();
-
-        if (empty($renamedColumns) && empty($renamedIndexes)) {
-            return false;
-        }
-
-        $renamedDiff = new TableDiff($this->tableArr['oldName']);
-        $renamedDiff->fromTable = $this->originalTable;
-
-        foreach ($renamedColumns as $oldName => $newName) {
-            $renamedDiff->renamedColumns[$oldName] = $this->table->getColumn($newName);
-        }
-
-        foreach ($renamedIndexes as $oldName => $newName) {
-            $renamedDiff->renamedIndexes[$oldName] = $this->table->getIndex($newName);
-        }
-
-        return $renamedDiff;
     }
 
     /**
@@ -186,5 +123,25 @@ class DatabaseUpdater
         }
 
         return $renamedIndexes;
+    }
+
+    protected static function tableDoesNotExist($table)
+    {
+        if (class_exists('Doctrine\\DBAL\\Schema\\SchemaException')
+            && method_exists('Doctrine\\DBAL\\Schema\\SchemaException', 'tableDoesNotExist')) {
+            return \Doctrine\DBAL\Schema\SchemaException::tableDoesNotExist($table);
+        }
+
+        return new \RuntimeException("Table {$table} does not exist");
+    }
+
+    protected static function tableAlreadyExists($table)
+    {
+        if (class_exists('Doctrine\\DBAL\\Schema\\SchemaException')
+            && method_exists('Doctrine\\DBAL\\Schema\\SchemaException', 'tableAlreadyExists')) {
+            return \Doctrine\DBAL\Schema\SchemaException::tableAlreadyExists($table);
+        }
+
+        return new \RuntimeException("Table {$table} already exists");
     }
 }

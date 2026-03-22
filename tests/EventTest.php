@@ -7,6 +7,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
+use TCG\Voyager\Database\Schema\SchemaManager;
 use TCG\Voyager\Events\BreadAdded;
 use TCG\Voyager\Events\BreadDataAdded;
 use TCG\Voyager\Events\BreadDataDeleted;
@@ -223,74 +224,40 @@ class EventTest extends TestCase
 
     public function testTableAddedEvent()
     {
-        $this->markTestSkipped('Skipping this test as Doctrine DBAL is not supported in Laravel 11');
-
         Event::fake();
         Auth::loginUsingId(1);
+        $table = 'event_test_add';
 
         $this->post(route('voyager.database.store'), [
-            'table' => [
-                'name'    => 'test',
-                'columns' => [
-                    [
-                        'name' => 'id',
-                        'type' => [
-                            'name' => 'integer',
-                        ],
-                    ],
-                ],
-                'indexes'     => [],
-                'foreignKeys' => [],
-                'options'     => [],
-            ],
+            'table' => $this->databaseTablePayload($table),
         ]);
 
         Event::assertDispatched(TableAdded::class);
+        $this->assertTrue(SchemaManager::tableExists($table));
     }
 
     public function testTableUpdatedEvent()
     {
-        $this->markTestSkipped('Skipping this test as Doctrine DBAL is not supported in Laravel 11');
-
         Event::fake();
         Auth::loginUsingId(1);
+        $table = 'event_test_update';
 
         $this->post(route('voyager.database.store'), [
-            'table' => [
-                'name'    => 'test',
-                'columns' => [
-                    [
-                        'name' => 'id',
-                        'type' => [
-                            'name' => 'integer',
-                        ],
-                    ],
-                ],
-                'indexes'     => [],
-                'foreignKeys' => [],
-                'options'     => [],
-            ],
+            'table' => $this->databaseTablePayload($table, true),
         ]);
 
         Event::assertNotDispatched(TableUpdated::class);
 
-        $this->put(route('voyager.database.update', ['test']), [
-            'table' => json_encode([
-                'name'    => 'test',
-                'oldName' => 'test',
-                'columns' => [
-                    [
-                        'name'    => 'id',
-                        'oldName' => 'id',
-                        'type'    => [
-                            'name' => 'integer',
-                        ],
-                    ],
-                ],
-                'indexes'     => [],
-                'foreignKeys' => [],
-                'options'     => [],
-            ]),
+        $tableDefinition = SchemaManager::listTableDetails($table)->toArray();
+        foreach ($tableDefinition['columns'] as &$column) {
+            if ($column['name'] === 'details') {
+                $column['type']['name'] = 'text';
+            }
+        }
+        unset($column);
+
+        $this->put(route('voyager.database.update', [$table]), [
+            'table' => json_encode($tableDefinition),
         ]);
 
         Event::assertDispatched(TableUpdated::class);
@@ -298,33 +265,55 @@ class EventTest extends TestCase
 
     public function testTableDeletedEvent()
     {
-        $this->markTestSkipped('Skipping this test as Doctrine DBAL is not supported in Laravel 11');
-
         Event::fake();
         Auth::loginUsingId(1);
+        $table = 'event_test_delete';
 
         $this->post(route('voyager.database.store'), [
-            'table' => [
-                'name'    => 'test',
-                'columns' => [
-                    [
-                        'name' => 'id',
-                        'type' => [
-                            'name' => 'integer',
-                        ],
-                    ],
-                ],
-                'indexes'     => [],
-                'foreignKeys' => [],
-                'options'     => [],
-            ],
+            'table' => $this->databaseTablePayload($table),
         ]);
 
         Event::assertNotDispatched(TableDeleted::class);
 
-        $this->delete(route('voyager.database.destroy', ['test']));
+        $this->delete(route('voyager.database.destroy', [$table]));
 
         Event::assertDispatched(TableDeleted::class);
+        $this->assertFalse(SchemaManager::tableExists($table));
+    }
+
+    protected function databaseTablePayload(string $name, bool $includeDetails = false): array
+    {
+        $columns = [[
+            'name' => 'id',
+            'oldName' => 'id',
+            'autoincrement' => true,
+            'type' => [
+                'name' => 'integer',
+            ],
+        ]];
+
+        if ($includeDetails) {
+            $columns[] = [
+                'name' => 'details',
+                'oldName' => 'details',
+                'type' => [
+                    'name' => 'json',
+                ],
+            ];
+        }
+
+        return [
+            'name' => $name,
+            'oldName' => $name,
+            'columns' => $columns,
+            'indexes' => [[
+                'name' => 'primary',
+                'columns' => ['id'],
+                'type' => 'PRIMARY',
+            ]],
+            'foreignKeys' => [],
+            'options' => [],
+        ];
     }
 
     public function testMediaFileAddedEvent()

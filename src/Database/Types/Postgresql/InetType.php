@@ -9,7 +9,7 @@ class InetType extends Type
 {
     public const NAME = 'inet';
 
-    public function getSQLDeclaration(array $field, AbstractPlatform $platform)
+    public function getSQLDeclaration(array $field, AbstractPlatform $platform): string
     {
         return 'inet';
     }
